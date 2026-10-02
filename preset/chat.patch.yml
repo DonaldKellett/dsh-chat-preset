@@ -1,0 +1,103 @@
+# dsh-chat-preset — the "Chat" agent preset for DeepSeek Harness (DSH).
+#
+# A deliberately minimal preset: an ordinary chatbot that can read what the user
+# types and the images they upload, can search the web, and can load exactly one
+# skill (`code-tutor`). It mounts no filesystem tools, no shell tools, no
+# background jobs, no subagents, no plan mode, and no goals — so it cannot read
+# or modify workspace content and cannot drive the surrounding operating system.
+#
+# This file is a Cordis patch list. It is appended verbatim to the target
+# profile's `cordis.patch.yml` inside the dsh-chat-preset markers, or booted
+# directly with `dsh --profile <name> --patch <this file>`.
+#
+# Tested against DeepSeek Harness 0.2.0-rc.2 (see README.md for details).
+#
+# `dshHomePath(...)` is a Loader-provided helper (`!!js` expression) that resolves
+# a path under $DSH_HOME (falling back to ~/.dsh), so the preset is portable
+# across machines.
+
+- insert:
+    - id: preset-chat
+      name: "@deepseek-ai/dsh-agent-preset"
+      config:
+        id: chat
+        name: Chat
+        description: >-
+          Chatbot only. Reads your prompts and uploaded images, may search the
+          web, and offers the code-tutor skill. No filesystem, shell, job,
+          subagent, goal, or plan access.
+        order: 10
+        plugins:
+          # ── identity ──────────────────────────────────────────────────────
+          # Shadows the deployment persona for this preset's agents only.
+          # `complete: false` keeps the rest of the system prompt (tool
+          # guidance, skill catalog rules) intact; `includeRuntimeContext:
+          # false` drops runtime-context snapshots that describe a workspace and
+          # a sandbox the Chat preset does not have.
+          - id: persona
+            name: "@deepseek-ai/dsh-persona"
+            config:
+              complete: false
+              includeRuntimeContext: false
+              prefix: |-
+                You are DeepSeek, a helpful and knowledgeable assistant answering questions in a chat conversation. You have no access to the user's computer: no files, no shell, no workspace. You may search the web for current information.
+
+                The user can type messages and upload images. Images you receive are part of the conversation and you can look at them directly. Uploaded non-image files (documents, archives, source files, spreadsheets) are NOT readable in this chat: you receive only a name, a size, and a storage path you cannot open. When the user uploads such a file, say so plainly, explain that this chat preset cannot read files, and ask them to paste the relevant text into the conversation instead — or to use a filesystem-enabled preset for that task.
+              suffix: ""
+
+          # ── skills: exactly one, and nothing else ─────────────────────────
+          # The skill registry itself is host-plane; a preset mounts the
+          # provider that supplies skills and the tool that exposes the catalog.
+          # `includeDefaultRoots: false` is what makes `code-tutor` the only
+          # skill available here: the project roots (<project>/.dsh/skills,
+          # <project>/.agents/skills), the user roots (<$DSH_HOME>/skills,
+          # <~/.agents>/skills), and the bundled office skills are all skipped.
+          # The single scanned root is the dedicated chat-preset skill
+          # directory, which the installer populates with code-tutor only.
+          - id: skill-filesystem
+            name: "@deepseek-ai/dsh-skill-filesystem"
+            config:
+              includeDefaultRoots: false
+              customSkillDirs:
+                - !!js dshHomePath('presets/chat/skills')
+          - id: tool-skill
+            name: "@deepseek-ai/dsh-tool-skill"
+
+          # ── the only external capability: the web ─────────────────────────
+          # `ctx.web` and its DeepSeek search provider are host-plane rows that
+          # the base composition already mounts, so this row alone gives the
+          # agent `web_search` and `web_fetch`. No other network-capable tool is
+          # mounted.
+          - id: tool-web
+            name: "@deepseek-ai/dsh-tool-web"
+            config:
+              search: true
+              fetch: true
+              searchTimeoutMs: 60000
+
+          # ── conversation hygiene ──────────────────────────────────────────
+          # Long chatbot conversations still need compaction, and web search
+          # results are the large tool outputs this prunes. Neither row touches
+          # the filesystem or the operating system.
+          - id: compaction-basic
+            name: "@deepseek-ai/dsh-compaction-basic"
+          - id: tool-result-pruner
+            name: "@deepseek-ai/dsh-compaction-tool-result-pruner"
+            config:
+              thresholdChars: 8192
+              headChars: 4096
+              tailChars: 1024
+
+          # ── asking the user ───────────────────────────────────────────────
+          # A chat assistant must be able to ask a clarifying question. This is
+          # a UI prompt, not an operating-system interaction.
+          - id: tool-ask-user
+            name: "@deepseek-ai/dsh-tool-ask-user"
+
+# Everything else stays out of the Chat preset on purpose. In particular there is
+# deliberately NO row for: tool-fs / tool-fs-search (read, write, edit, glob,
+# grep), tool-bash / tool-pwsh, tool-jobs, terminal, subagent / workflow / ralph
+# delegation, tool-todo, plan mode, goals, agent-instructions (it reads
+# AGENTS.md from the workspace), present (it publishes files), plugin-manager,
+# fs-sandbox (no preset filesystem backend is mounted, so the filesystem tools
+# could not even register), and the office skills.

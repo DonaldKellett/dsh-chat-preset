@@ -141,3 +141,61 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# ── Build artifacts: never commit compiled output ───────────────────────────
+# This project ships a YAML preset and a Markdown skill, so nothing here is
+# compiled today. These rules exist so that adding a custom DSH plugin later
+# cannot accidentally commit its binaries.
+
+# Native libraries and executables (all platforms)
+*.dll
+*.exe
+*.so
+*.so.*
+*.dylib
+*.node
+*.pdb
+*.lib
+*.obj
+*.o
+*.a
+*.exp
+*.ilk
+*.wasm
+
+# Compiled / transpiled output (directory-scoped so it cannot swallow the
+# hand-written scripts/, preset/, tests/, and .github/ trees)
+**/bin/
+**/obj/
+**/Debug/
+**/Release/
+**/x64/
+**/dist/
+**/build/
+**/coverage/
+**/artifacts/
+**/*.js.map
+**/*.mjs.map
+**/*.cjs.map
+**/*.d.ts.map
+
+# Installer / packaging output
+*.msi
+*.nupkg
+*.dmg
+*.pkg
+*.deb
+*.rpm
+*.app
+*.snap
+*.AppImage
+
+# .NET / MSBuild incremental state
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.vs/
+project.lock.json
+project.fragment.lock.json
+

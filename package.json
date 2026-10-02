@@ -1,0 +1,23 @@
+{
+  "name": "dsh-chat-preset",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Chat-only agent preset and code-tutor skill for DeepSeek Harness (DSH).",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DonaldKellett/dsh-chat-preset.git"
+  },
+  "scripts": {
+    "check:yaml": "node scripts/check-yaml.mjs",
+    "verify": "node scripts/verify.mjs",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

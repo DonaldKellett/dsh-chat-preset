@@ -1,0 +1,48 @@
+# Normalize line endings so a Windows checkout with core.autocrlf=true does not
+# rewrite the shell installers (which must stay LF) or the YAML preset.
+#
+# Default: text files are stored as LF in the repository and checked out as LF.
+* text=auto eol=lf
+
+# PowerShell scripts are the exception: Windows PowerShell 5.1 is happiest with
+# CRLF, and CRLF is valid for PowerShell 7 and PowerShell Core everywhere.
+*.ps1 text eol=crlf
+
+# Shell scripts must never gain CRLF; a CRLF shebang breaks them on Unix.
+*.sh text eol=lf
+
+# Markdown, YAML, JSON, and JavaScript are LF everywhere.
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.mjs  text eol=lf
+*.js   text eol=lf
+
+# Binary assets: never touch them.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.7z binary
+
+# Compiled output and archives.
+*.exe   binary
+*.dll   binary
+*.so    binary
+*.dylib binary
+*.node  binary
+*.pdb   binary
+*.lib   binary
+*.msi   binary
+*.nupkg binary
+
+# Lockfiles are generated; mark them so GitHub collapses them in review.
+pnpm-lock.yaml linguist-generated
+package-lock.json linguist-generated
+yarn.lock linguist-generated
