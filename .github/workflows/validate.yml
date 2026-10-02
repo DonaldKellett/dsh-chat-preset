@@ -1,0 +1,121 @@
+name: validate
+
+# Basic configuration validation for the dsh-chat-preset repository:
+#   - every YAML file parses through the harness entry-list dialect (!!js tags)
+#   - every JSON file parses
+#   - the Chat preset keeps its isolation invariant (allow-listed rows only)
+#   - the code-tutor skill has valid frontmatter and keeps its hard boundary
+#   - the shell installers pass shellcheck
+#   - the workflows themselves pass actionlint
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  config-syntax:
+    name: YAML and JSON syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install js-yaml (the YAML parser used by the checks)
+        run: npm install --no-save --ignore-scripts js-yaml@4
+
+      - name: Validate JSON files
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          # jq ships on ubuntu-latest runners; no marketplace action needed.
+          jq --version
+          found=0
+          for file in **/*.json; do
+            case "$file" in
+              node_modules/*|*/node_modules/*) continue ;;
+            esac
+            echo "checking $file"
+            jq -e . "$file" > /dev/null
+            found=$((found + 1))
+          done
+          echo "validated $found JSON file(s)"
+          if [ "$found" -eq 0 ]; then
+            echo "error: no JSON files were validated" >&2
+            exit 1
+          fi
+
+      - name: Validate YAML files and the Chat preset shape
+        run: node scripts/check-yaml.mjs
+
+      - name: Fail if validation rewrote tracked files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "error: validation modified tracked files:" >&2
+            git status --porcelain >&2
+            exit 1
+          fi
+
+  tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install js-yaml
+        run: npm install --no-save --ignore-scripts js-yaml@4
+
+      - name: Run the test suite
+        run: node --test
+
+  shellcheck:
+    name: Shell script lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Widely used, actively maintained wrapper around koalaman/shellcheck.
+      - name: Run shellcheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: ./scripts
+          severity: style
+          additional_files: ''
+        env:
+          SHELLCHECK_OPTS: -e SC1090 -e SC1091
+
+  actionlint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The maintained image published by the action's own author.
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:latest
+        with:
+          args: -color
