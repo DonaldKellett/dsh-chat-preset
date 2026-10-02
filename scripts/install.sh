@@ -31,13 +31,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ -n "${DSH_HOME_ARG}" ]; then
-  DSH_HOME="${DSH_HOME_ARG}"
-elif [ -n "${DSH_HOME:-}" ]; then
-  DSH_HOME="${DSH_HOME}"
-else
-  DSH_HOME="${HOME}/.dsh"
+# Resolve the harness home: an explicit --dsh-home wins, then $DSH_HOME, then
+# the shipped default. A blank environment value is treated as unset.
+home_override="${DSH_HOME_ARG}"
+if [ -z "${home_override}" ]; then
+  home_override="${DSH_HOME:-}"
 fi
+if [ -z "${home_override}" ]; then
+  home_override="${HOME}/.dsh"
+fi
+readonly DSH_HOME="${home_override}"
 
 PRESET_SRC="${REPO_ROOT}/preset/chat.patch.yml"
 SKILL_SRC="${REPO_ROOT}/skills/code-tutor/SKILL.md"

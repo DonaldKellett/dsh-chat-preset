@@ -15,8 +15,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 PROFILE="${DSH_PROFILE:-desktop}"
 DSH_HOME_ARG=""
 KEEP_GLOBAL=0
@@ -31,13 +29,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ -n "${DSH_HOME_ARG}" ]; then
-  DSH_HOME="${DSH_HOME_ARG}"
-elif [ -n "${DSH_HOME:-}" ]; then
-  DSH_HOME="${DSH_HOME}"
-else
-  DSH_HOME="${HOME}/.dsh"
+# Resolve the harness home: an explicit --dsh-home wins, then $DSH_HOME, then
+# the shipped default. A blank environment value is treated as unset.
+home_override="${DSH_HOME_ARG}"
+if [ -z "${home_override}" ]; then
+  home_override="${DSH_HOME:-}"
 fi
+if [ -z "${home_override}" ]; then
+  home_override="${HOME}/.dsh"
+fi
+readonly DSH_HOME="${home_override}"
 
 PATCH_FILE="${DSH_HOME}/profiles/${PROFILE}/cordis.patch.yml"
 PRESET_SKILL_DIR="${DSH_HOME}/presets/chat/skills/code-tutor"
@@ -83,11 +84,11 @@ if [ -d "${PRESET_SKILL_DIR}" ]; then
   echo "skill    <- removed ${PRESET_SKILL_DIR}"
 fi
 # Clean up the empty chat-preset skill tree, but never $DSH_HOME/skills itself.
-if [ -d "${PRESET_SKILLS_ROOT}" ] && [ -z "$(ls -A "${PRESET_SKILLS_ROOT}" 2>/dev/null)" ]; then
-  rmdir "${PRESET_SKILLS_ROOT}" 2>/dev/null || true
+if [ -d "${PRESET_SKILLS_ROOT}" ] && ! compgen -G "${PRESET_SKILLS_ROOT}/*" > /dev/null 2>&1; then
+  rmdir "${PRESET_SKILLS_ROOT}" || true
 fi
-if [ -d "${PRESET_ROOT}" ] && [ -z "$(ls -A "${PRESET_ROOT}" 2>/dev/null)" ]; then
-  rmdir "${PRESET_ROOT}" 2>/dev/null || true
+if [ -d "${PRESET_ROOT}" ] && ! compgen -G "${PRESET_ROOT}/*" > /dev/null 2>&1; then
+  rmdir "${PRESET_ROOT}" || true
 fi
 
 if [ "${KEEP_GLOBAL}" -eq 0 ] && [ -d "${GLOBAL_SKILL_DIR}" ]; then

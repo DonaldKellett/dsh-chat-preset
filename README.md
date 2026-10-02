@@ -431,13 +431,15 @@ push and pull request, on `ubuntu-latest`:
 
 | Job | What it does |
 |---|---|
-| `yaml-json` | Parses every YAML file with `js-yaml` through the harness entry-list dialect (`!!js` tags included) and every JSON file with `jq`; then asserts the Chat preset's shape — exactly the seven allow-listed child plugins, none of the forbidden filesystem/shell families, the pinned skill root, and `includeDefaultRoots: false`. |
-| `tests` | Runs `node --test`, which re-runs the preset-shape and skill-frontmatter checks as a test suite. |
-| `shellcheck` | Lints `scripts/*.sh` with [shellcheck](https://github.com/koalaman/shellcheck) via [ludeeus/action-shellcheck](https://github.com/ludeeus/action-shellcheck). |
+| `config-syntax` | Parses every YAML file with `js-yaml` through the harness entry-list dialect (`!!js` tags included) and every JSON file with `jq`; then asserts the Chat preset's shape — exactly the seven allow-listed child plugins, none of the forbidden filesystem/shell families, the pinned skill root, and `includeDefaultRoots: false`. Fails if validation rewrote a tracked file. |
+| `tests` | Runs `node --test`, which re-runs the preset-shape, skill-frontmatter, and repository-hygiene checks as a suite. |
+| `shellcheck` | Lints `scripts/*.sh` with [ShellCheck](https://github.com/koalaman/shellcheck) at `--severity=warning`, from the release tarball published by ShellCheck's own maintainer, pinned to `v0.11.0`. |
 | `actionlint` | Lints the workflow files themselves with [rhysd/actionlint](https://github.com/rhysd/actionlint), run from its own maintained Docker image. |
 
-The pipeline uses existing, popular actions where a suitable one exists and falls
-back to plain shell commands (`jq`, `node`) only where none does.
+Existing first-party or widely used tooling is used wherever it fits; plain
+shell commands (`curl`, `tar`, `jq`, `node`) cover the gaps rather than pulling in
+an unnecessary third-party wrapper. There is no build job, because there is
+nothing to build.
 
 ---
 

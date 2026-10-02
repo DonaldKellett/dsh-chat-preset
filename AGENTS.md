@@ -159,8 +159,12 @@ not commit until it is green.
   `# >>> dsh-chat-preset (managed block - do not edit by hand) >>>` and
   `# <<< dsh-chat-preset <<<`. Keep those marker strings byte-identical between
   `install.sh`/`install.ps1` and `uninstall.sh`/`uninstall.ps1`.
-- **`Set-Content -Encoding utf8` writes a BOM under Windows PowerShell 5.1.**
-  Harmless for YAML here, but do not introduce a BOM-sensitive format.
+- **Never use `Get-Content`/`Set-Content`/`Out-File` on the profile patch.** Under
+  Windows PowerShell 5.1 they read with the ANSI code page unless `-Encoding` is
+  given (which corrupted the em dash in the preset comments), and
+  `-Encoding utf8` writes a BOM while still converting LF to CRLF. The
+  PowerShell scripts use `System.IO.File` with a `UTF8Encoding($false)` instance
+  and preserve the file's existing line endings. Keep it that way.
 - **The GUI's Agent-presets editor writes a full `config` override** for a
   preset into the profile patch, which then shadows the managed block. Document
   it; do not try to fight it.
@@ -183,12 +187,15 @@ not commit until it is green.
 ## Commit and CI conventions
 
 - CI is [`.github/workflows/validate.yml`](.github/workflows/validate.yml):
-  `yaml-json`, `tests`, `shellcheck`, `actionlint`. All four must pass.
-- Keep `shellcheck` clean: quote expansions, avoid `ls` parsing, and prefer
-  `rm -rf`/`rmdir` guards over `find -delete`.
+  `config-syntax`, `tests`, `shellcheck`, `actionlint`. All four must pass.
+- Keep `shellcheck` clean at `--severity=warning`, and preferably at
+  `--severity=style`. It ships Linux/macOS binaries only, but the official
+  Windows build from the same release works for a local check:
+  `shellcheck --severity=style --external-sources scripts/*.sh`.
 - Prefer several focused commits over one large commit.
 - Never commit `node_modules/`, lockfile churn from an unrelated package manager,
-  or any build artifact. See [`.gitignore`](.gitignore).
+  or any build artifact. See [`.gitignore`](.gitignore) and
+  [`.gitattributes`](.gitattributes).
 
 ---
 

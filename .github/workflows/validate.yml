@@ -93,19 +93,42 @@ jobs:
   shellcheck:
     name: Shell script lint
     runs-on: ubuntu-latest
+    env:
+      # Pinned so the job cannot start failing because an upstream action
+      # changed its interface. Bump deliberately.
+      SHELLCHECK_VERSION: v0.11.0
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Widely used, actively maintained wrapper around koalaman/shellcheck.
-      - name: Run shellcheck
-        uses: ludeeus/action-shellcheck@master
-        with:
-          scandir: ./scripts
-          severity: style
-          additional_files: ''
-        env:
-          SHELLCHECK_OPTS: -e SC1090 -e SC1091
+      # shellcheck is the standard shell linter. Its own maintainer publishes
+      # the release tarball, which is what the popular wrapper actions download
+      # too; fetching it directly keeps the job on one pinned version and avoids
+      # a third-party wrapper's interface changing under us.
+      - name: Install shellcheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          url="https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/${archive}"
+          echo "downloading ${url}"
+          curl --fail --silent --show-error --location --output "/tmp/${archive}" "${url}"
+          tar -xJf "/tmp/${archive}" -C /tmp
+          install -m 0755 "/tmp/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
+
+      - name: Lint the shell scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t scripts < <(find scripts -maxdepth 1 -name '*.sh' -type f | sort)
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "error: no shell scripts found under scripts/" >&2
+            exit 1
+          fi
+          printf 'linting %s\n' "${scripts[@]}"
+          shellcheck --severity=warning --external-sources "${scripts[@]}"
+          echo "shellcheck clean"
 
   actionlint:
     name: Workflow lint
