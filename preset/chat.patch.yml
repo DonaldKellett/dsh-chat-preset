@@ -79,14 +79,32 @@
           # Long chatbot conversations still need compaction, and web search
           # results are the large tool outputs this prunes. Neither row touches
           # the filesystem or the operating system.
-          - id: compaction-basic
-            name: "@deepseek-ai/dsh-compaction-basic"
-          - id: tool-result-pruner
-            name: "@deepseek-ai/dsh-compaction-tool-result-pruner"
+          #
+          # This group is REQUIRED, not cosmetic. `dsh-compaction-basic` provides
+          # the `compaction` service (its engine extends `CompactionEngine`) and
+          # `dsh-compaction-tool-result-pruner` provides `toolResultPruner`. A
+          # preset must not publish services into the root realm: the registry
+          # rejects the whole mount with
+          #   "Preset services require isolate realms: compaction, toolResultPruner."
+          # `isolate` gives each named service a realm-private instance bound to
+          # this preset revision, which is also what keeps two live sessions on
+          # different preset revisions from sharing one compaction backend. The
+          # shipped `standard` preset wraps these same two rows the same way.
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
             config:
-              thresholdChars: 8192
-              headChars: 4096
-              tailChars: 1024
+              - id: compaction-basic
+                name: "@deepseek-ai/dsh-compaction-basic"
+              - id: tool-result-pruner
+                name: "@deepseek-ai/dsh-compaction-tool-result-pruner"
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
 
           # ── asking the user ───────────────────────────────────────────────
           # A chat assistant must be able to ask a clarifying question. This is

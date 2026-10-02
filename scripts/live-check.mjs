@@ -156,15 +156,17 @@ try {
   process.exit(1);
 }
 
-// ── every child row: resolves, validates against its schema, activates ──────
-const children = [];
-const collect = (rows) => {
-  for (const row of rows ?? []) {
-    if (row?.group === true) collect(row.config);
-    else children.push(row);
-  }
-};
-collect(presetRow.config.plugins);
+// ── mount units: the preset's top-level rows, groups preserved ──────────────
+// A group row is a mount unit because `isolate` is the only way a preset may
+// publish a service, and `isolate` lives on the group. Flattening groups away
+// would hide the realm decision, which is exactly the mistake this check exists
+// to catch.
+const mountUnits = presetRow.config.plugins.map((row, index) => ({
+  id: typeof row.id === 'string' && row.id !== '' ? row.id : `row-${index + 1}`,
+  row,
+  children: row.group === true ? (row.config ?? []) : [row],
+  isolate: row.group === true && row.isolate ? row.isolate : {},
+}));
 
 const { Context } = await harnessImport('@deepseek-ai/cordis');
 
@@ -179,57 +181,172 @@ const isPlugin = (value) =>
 /** Pick the plugin export out of a loaded module namespace. */
 const pickPlugin = (mod) => [mod, mod?.default, mod?.default?.default].find(isPlugin);
 
-for (const row of children) {
-  const label = `${row.id} (${row.name})`;
+/** Service names a context published into its own realm, keyed by symbol. */
+const providedServices = (ctx) => {
+  const found = new Map();
+  for (const key of Object.getOwnPropertySymbols(ctx.reflect.store)) {
+    const impl = ctx.reflect.store[key];
+    if (impl !== undefined) found.set(key, impl.name);
+  }
+  return found;
+};
 
+/**
+ * Service names a plugin declares it provides.
+ *
+ * `static provide` is inherited through the prototype chain, so a subclass of a
+ * service class — `dsh-compaction-basic`'s engine extends `CompactionEngine` —
+ * still reports its service. Most first-party plugins instead pass the name to
+ * `super(ctx, "<name>")` inside the Service base constructor, which `provide`
+ * never sees; that half is caught by the activation probe below.
+ */
+function declaredProvides(plugin) {
+  const provide = plugin.provide;
+  if (provide === undefined || provide === null) return [];
+  const names = typeof provide === 'string' ? [provide] : Array.isArray(provide) ? provide : Object.keys(provide);
+  const ignored = new Set(['optional', 'required', 'name']);
+  return [...new Set(names.map(String).filter((name) => !ignored.has(name)))];
+}
+
+/**
+ * A permissive stand-in for one injected service.
+ *
+ * A preset row may only CONSUME host-plane services, so stubbing them is
+ * faithful: it lets the plugin reach its `Service` constructor, which is the
+ * only point at which the real app can observe a service leak. A callable proxy
+ * satisfies both property access and use as a function.
+ */
+function serviceStub() {
+  const target = function stub() {};
+  return new Proxy(target, {
+    get: (_t, prop) => {
+      // Never look thenable, and satisfy primitive coercion so a plugin that
+      // stringifies an injected service does not throw on this stub.
+      if (prop === 'then') return undefined;
+      if (prop === Symbol.toPrimitive) return () => 'service-stub';
+      if (prop === Symbol.toStringTag) return 'ServiceStub';
+      if (prop === 'toString' || prop === 'valueOf') return () => 'service-stub';
+      return serviceStub();
+    },
+    apply: () => serviceStub(),
+    construct: () => serviceStub(),
+  });
+}
+
+/** Names of the services this context published, keyed by symbol. */
+function providedServiceNames(ctx) {
+  const store = ctx.reflect?._store ?? ctx.reflect?.store;
+  const found = new Set();
+  if (!store || typeof store !== 'object') return found;
+  for (const key of Object.getOwnPropertySymbols(store)) {
+    const impl = store[key];
+    if (impl !== undefined && typeof impl.name === 'string') found.add(impl.name);
+  }
+  return found;
+}
+
+/** One resolved child row. */
+async function resolveChild(row) {
+  const label = `${row.id} (${row.name})`;
   let mod;
   try {
     mod = await harnessImport(row.name);
   } catch (error) {
     note(false, `${label}: module resolves`, error.message);
-    continue;
+    return undefined;
   }
-
-  // Cordis accepts both plugin shapes; see `pickPlugin` above.
   const plugin = pickPlugin(mod);
   if (plugin === undefined) {
     note(false, `${label}: module exports a Cordis plugin`, `exports: ${Object.keys(mod ?? {}).join(', ') || typeof mod}`);
-    continue;
+    return undefined;
   }
   note(true, `${label}: module resolves and exports a Cordis plugin`);
 
   const childConfig = interpolate(evaluationContext, structuredClone(row.config ?? {}));
-
   if (typeof plugin.Config === 'function') {
     try {
       plugin.Config(childConfig);
       note(true, `${label}: config passes the plugin's own schema`);
     } catch (error) {
       note(false, `${label}: config passes the plugin's own schema`, error.message);
-      continue;
+      return undefined;
     }
   } else {
     note(true, `${label}: plugin declares no Config schema`);
   }
+  return { row, label, plugin, config: childConfig };
+}
 
-  // Activate in a pristine context. A plugin that waits for a host service is
-  // fine; a plugin that throws means the row itself is broken.
-  const ctx = new Context();
-  try {
-    await ctx.plugin(plugin, childConfig);
-    await ctx.fiber.await();
-    note(true, `${label}: activates without error`);
-  } catch (error) {
-    const message = String(error?.message ?? error);
-    const pendingService = /cannot get|not provided|waiting for|inject/i.test(message);
-    note(pendingService, `${label}: activates without error`, pendingService ? `waiting on host services: ${message}` : message);
-  } finally {
+for (const unit of mountUnits) {
+  const resolved = [];
+  for (const row of unit.children) {
+    const child = await resolveChild(row);
+    if (child !== undefined) resolved.push(child);
+  }
+
+  // ── realm check: no service may leak into the root realm ──────────────────
+  // This mirrors the registry's own audit (see `leakedServices` in
+  // @deepseek-ai/dsh-agent-preset-registry): a service whose implementation
+  // symbol is the one the ROOT context owns was published into the root realm,
+  // and the registry then rejects the whole preset with
+  //   "Preset services require isolate realms: <name>."
+  // `isolate` on the owning group is what turns that into a realm-private
+  // symbol instead.
+  const providedByChild = new Map();
+  for (const child of resolved) {
+    const ctx = new Context();
+    const baseline = providedServiceNames(ctx);
+    for (const dependency of child.plugin.inject ?? []) ctx.provide(dependency, serviceStub());
+
+    let activated = true;
+    try {
+      await ctx.plugin(child.plugin, child.config);
+      await ctx.fiber.await();
+    } catch (error) {
+      const message = String(error?.message ?? error);
+      // A missing host service is expected and harmless here; anything else is
+      // the row's own failure.
+      const pendingService = /cannot get|not provided|waiting for|inject/i.test(message);
+      activated = pendingService;
+      if (!pendingService) note(false, `${child.label}: activates without error`, message);
+    }
+    if (activated) note(true, `${child.label}: activates to a running fiber`);
+
+    const nowProvided = [...providedServiceNames(ctx)].filter(
+      (name) => !baseline.has(name) && !(child.plugin.inject ?? []).includes(name),
+    );
+    providedByChild.set(child.label, nowProvided.sort());
+
+    for (const name of nowProvided) {
+      if (unit.isolate[name] !== undefined) continue;
+      note(
+        false,
+        `${child.label}: does not publish service "${name}" into the root realm`,
+        `the preset mount fails with "Preset services require isolate realms: ${name}." — wrap this row in a group with "isolate: { ${name}: true }"`,
+      );
+    }
+
     await ctx.fiber.dispose().catch(() => {});
+  }
+
+  const providers = [...providedByChild].filter(([, names]) => names.length > 0);
+  if (providers.length === 0) {
+    note(true, `${unit.id}: provides no service, so no isolate realm is needed`);
+  }
+  for (const [label, names] of providers) {
+    for (const name of names) {
+      note(
+        unit.isolate[name] !== undefined,
+        `${unit.id}: service "${name}" from ${label} is isolated for this preset revision`,
+        `add "${name}" to the group's isolate map`,
+      );
+    }
   }
 }
 
 // ── the skill root expression resolves as intended ──────────────────────────
-const skillRow = children.find((row) => row.name === '@deepseek-ai/dsh-skill-filesystem');
+const allChildRows = mountUnits.flatMap((unit) => unit.children);
+const skillRow = allChildRows.find((row) => row.name === '@deepseek-ai/dsh-skill-filesystem');
 if (!skillRow) {
   note(false, 'skill-filesystem row present');
 } else {

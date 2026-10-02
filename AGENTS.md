@@ -76,6 +76,53 @@ Two related rules:
 - `persona` must keep `includeRuntimeContext: false` so no workspace, sandbox,
   approval, or delegation snapshot reaches the model.
 
+### Preset service isolation (this broke the preset once)
+
+A preset **must not publish a service into the root realm.** The registry audits
+the mounted subtree and rejects the *entire* preset when it finds one:
+
+```
+Preset services require isolate realms: compaction, toolResultPruner.
+```
+
+A rejected preset is absent from the session picker while still being listed —
+with that error text — under Settings → Agent presets.
+
+`dsh-compaction-basic` provides `compaction` (its engine extends
+`CompactionEngine`, which passes the service name to the `Service` base
+constructor) and `dsh-compaction-tool-result-pruner` provides
+`toolResultPruner`. Both therefore live inside one `cordis:group` row whose
+`isolate` map names each service:
+
+```yaml
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: "@deepseek-ai/dsh-compaction-basic"
+    - id: tool-result-pruner
+      name: "@deepseek-ai/dsh-compaction-tool-result-pruner"
+```
+
+The shipped `standard` preset wraps the same two rows the same way. Note that
+`provide`/`inject` metadata does **not** reveal these names — `plugin.provide` is
+`undefined` for both, because the name is a `super(ctx, "<name>")` argument. Any
+new service-providing row needs the same treatment, and the only way to know is
+to activate the row and diff the services it publishes, which is what
+`live-check.mjs` now does.
+
+`tests/preset-shape.test.mjs` pins the group and its `isolate` map as a cheap
+static guard, but it can only check the rows listed in its `SERVICE_PROVIDERS`
+map. Treat `live-check.mjs` as authoritative.
+
+Regression-test the guard itself by deleting the `isolate` map from a copy of the
+preset and running `live-check.mjs --preset <copy>`: it must fail with the same
+`does not publish service "..." into the root realm` lines.
+
 ---
 
 ## Validating a change
@@ -123,8 +170,13 @@ DSH Electron binary (only that binary can read `app.asar`) and:
 3. validates the declaration against `@deepseek-ai/dsh-agent-preset`'s `Config`;
 4. resolves every child plugin package from `app.asar`, unwraps the ESM/CJS
    interop (`mod.default.default` for CJS), validates the row against that
-   plugin's own `Config` schema, and activates it in a pristine `Context`;
-5. mounts the real `skill-filesystem` provider against a stub skill registry and
+   plugin's own `Config` schema, and activates it in a pristine `Context` with
+   permissive stubs for every service it injects — so the plugin reaches its
+   `Service` constructor;
+5. diffs the services each activation publishes against the owning group's
+   `isolate` map, reproducing the registry's "require isolate realms" rejection
+   locally instead of at app boot;
+6. mounts the real `skill-filesystem` provider against a stub skill registry and
    asserts that `code-tutor`, and only `code-tutor`, is discovered and loads.
 
 ```powershell

@@ -163,6 +163,70 @@ test('web access is search plus fetch', () => {
   assert.equal(row.config.fetch, true);
 });
 
+// ── preset service isolation ────────────────────────────────────────────────
+//
+// A preset must not publish a service into the root realm. `compaction-basic`
+// provides `compaction` (its engine extends `CompactionEngine`) and
+// `compaction-tool-result-pruner` provides `toolResultPruner`; both therefore
+// need an `isolate` realm, or the registry rejects the entire preset with
+// "Preset services require isolate realms: compaction, toolResultPruner."
+// and the preset never appears in the picker.
+//
+// The authoritative check is `scripts/live-check.mjs`, which activates each row
+// and diffs the services it publishes. This suite pins the shape that makes it
+// pass, so a refactor cannot quietly drop the realm.
+
+test('the two service-providing rows sit in one group with an isolate realm', () => {
+  const plugins = presetRow().config.plugins;
+  const group = plugins.find((child) => child?.group === true && child.id === 'compaction');
+  assert.ok(group, 'the "compaction" group row must exist');
+
+  const nested = (group.config ?? []).map((child) => child?.name);
+  assert.deepEqual(
+    nested,
+    ['@deepseek-ai/dsh-compaction-basic', '@deepseek-ai/dsh-compaction-tool-result-pruner'],
+    'the group must contain exactly the two compaction rows',
+  );
+
+  assert.deepEqual(
+    Object.keys(group.isolate ?? {}).sort(),
+    ['compaction', 'toolResultPruner'],
+    'the group must isolate every service its children provide',
+  );
+  for (const [name, realm] of Object.entries(group.isolate)) {
+    assert.ok(realm !== undefined && realm !== null && realm !== false, `isolate.${name} must be truthy`);
+  }
+});
+
+test('no service-providing row is declared outside the isolate group', () => {
+  const SERVICE_PROVIDERS = new Map([
+    ['@deepseek-ai/dsh-compaction-basic', 'compaction'],
+    ['@deepseek-ai/dsh-compaction-tool-result-pruner', 'toolResultPruner'],
+    // Keep this list in step with `scripts/live-check.mjs`; it currently
+    // confirms the remaining five rows provide nothing.
+  ]);
+
+  const isolateNames = new Set();
+  const unisolated = [];
+  const collect = (rows, isolated) => {
+    for (const row of rows ?? []) {
+      if (row?.group === true) {
+        const names = new Set([...isolated, ...Object.keys(row.isolate ?? {})]);
+        collect(row.config, names);
+        continue;
+      }
+      for (const name of isolated) isolateNames.add(name);
+      if (SERVICE_PROVIDERS.has(row?.name) && !isolated.has(SERVICE_PROVIDERS.get(row.name))) {
+        unisolated.push(`${row.name} (provides ${SERVICE_PROVIDERS.get(row.name)})`);
+      }
+    }
+  };
+  collect(presetRow().config.plugins, new Set());
+
+  assert.deepEqual(unisolated, [], `service-providing rows outside an isolate realm: ${unisolated.join(', ')}`);
+  assert.ok(isolateNames.has('compaction') && isolateNames.has('toolResultPruner'));
+});
+
 // ── the skill ───────────────────────────────────────────────────────────────
 
 test('the skill directory name matches the frontmatter name', () => {

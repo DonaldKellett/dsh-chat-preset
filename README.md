@@ -65,10 +65,20 @@ The exact child-plugin list is seven rows in
 @deepseek-ai/dsh-skill-filesystem      (scans only the Chat skill root)
 @deepseek-ai/dsh-tool-skill
 @deepseek-ai/dsh-tool-web              (search + fetch)
-@deepseek-ai/dsh-compaction-basic
-@deepseek-ai/dsh-compaction-tool-result-pruner
+@deepseek-ai/dsh-compaction-basic                     ┐ one cordis:group
+@deepseek-ai/dsh-compaction-tool-result-pruner        ┘ carrying an isolate realm
 @deepseek-ai/dsh-tool-ask-user
 ```
+
+The two compaction rows share one `cordis:group` row carrying
+`isolate: { compaction: true, toolResultPruner: true }`. That is required rather
+than cosmetic: a DSH preset may not publish a service into the root realm, and
+those two rows provide the `compaction` and `toolResultPruner` services. Without
+the realm DSH rejects the entire preset with
+`Preset services require isolate realms: compaction, toolResultPruner.` and it
+never reaches the session picker. The realm also gives each preset revision its
+own compaction backend, so two live sessions on different revisions never share
+one.
 
 Nothing else is mounted. In particular the preset deliberately does **not**
 mount `dsh-tool-fs`, `dsh-tool-fs-search`, `dsh-tool-bash`, `dsh-tool-pwsh`,
@@ -473,6 +483,16 @@ appear, run `./scripts/verify.sh` and check that the managed block is present in
 A child row failed to mount. Run [`scripts/live-check.mjs`](scripts/live-check.mjs)
 (see [Development](#development)) to see which one and why. The most likely cause
 is a DSH version whose plugin package name or config schema has changed.
+
+**Settings shows `Preset services require isolate realms: <name>.`**
+A child plugin provides a service and is not wrapped in an isolation realm, so
+DSH refuses to mount the preset and it will not appear in the session picker.
+This affects the shipped configuration if you edit it: keep the two compaction
+rows inside the `cordis:group` row whose `isolate` map names `compaction` and
+`toolResultPruner`. If you add another service-providing plugin, activate it with
+`live-check.mjs` — it names the service and the exact `isolate` entry to add.
+`plugin.provide` does **not** list these names, so reading the plugin metadata is
+not enough.
 
 **The preset disappeared after I changed settings in the GUI.**
 Settings → Agent presets can write a full config override for a preset into the
